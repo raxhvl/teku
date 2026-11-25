@@ -38,6 +38,7 @@ import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloa
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadBid;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayload;
+import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayloadBlockHashCalculator;
 import tech.pegasys.teku.spec.datastructures.execution.Transaction;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.ExecutionPayloadCapella;
 import tech.pegasys.teku.spec.datastructures.state.beaconstate.BeaconState;
@@ -424,6 +425,13 @@ public class ExecutionPayloadGossipValidator {
           reject(
               "Invalid payload withdrawals. Execution Payload Envelope had withdrawals root %s but expected %s",
               withdrawalsRoot, expectedWithdrawalsRoot));
+    }
+
+    final Bytes32 computedBlockHash =
+        ExecutionPayloadBlockHashCalculator.computeGloasBlockHash(
+            envelope, spec.getExecutionRequestsDataCodec(envelope.getSlot()));
+    if (!payload.getBlockHash().equals(computedBlockHash)) {
+      return Optional.of(reject("Block hash is not computed correctly"));
     }
 
     return Optional.empty();

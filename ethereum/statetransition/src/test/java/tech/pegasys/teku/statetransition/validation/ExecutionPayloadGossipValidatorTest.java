@@ -27,6 +27,7 @@ import static tech.pegasys.teku.statetransition.validation.InternalValidationRes
 import static tech.pegasys.teku.statetransition.validation.InternalValidationResult.ignore;
 import static tech.pegasys.teku.statetransition.validation.InternalValidationResult.reject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +37,9 @@ import org.apache.tuweni.bytes.Bytes32;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import tech.pegasys.teku.infrastructure.async.SafeFuture;
+import tech.pegasys.teku.infrastructure.ssz.SszData;
+import tech.pegasys.teku.infrastructure.ssz.primitive.SszBytes32;
+import tech.pegasys.teku.infrastructure.ssz.schema.SszContainerSchema;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.Spec;
 import tech.pegasys.teku.spec.SpecMilestone;
@@ -49,6 +53,8 @@ import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloa
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadBid;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayload;
+import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayloadBlockHashCalculator;
+import tech.pegasys.teku.spec.datastructures.execution.ExecutionRequestsDataCodec;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.ExecutionPayloadCapella;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.Withdrawal;
 import tech.pegasys.teku.spec.datastructures.state.beaconstate.BeaconState;
@@ -77,6 +83,7 @@ public class ExecutionPayloadGossipValidatorTest {
   private BeaconState blockState;
   private ExecutionPayload payload;
   private SchemaDefinitionsGloas schemaDefinitions;
+  private ExecutionRequestsDataCodec requestsCodec;
 
   @BeforeEach
   void setUp(final SpecContext specContext) {
@@ -101,6 +108,21 @@ public class ExecutionPayloadGossipValidatorTest {
                 dataStructureUtil.randomBuilderIndex(),
                 dataStructureUtil.randomBytes32(),
                 dataStructureUtil.randomBytes32());
+    requestsCodec = specContext.getSpec().getExecutionRequestsDataCodec(slot);
+    when(spec.getExecutionRequestsDataCodec(any())).thenReturn(requestsCodec);
+    payload =
+        withBlockHash(
+            payload,
+            ExecutionPayloadBlockHashCalculator.computeGloasBlockHash(envelope, requestsCodec));
+    envelope =
+        envelope
+            .getSchema()
+            .create(
+                payload,
+                envelope.getExecutionRequests(),
+                envelope.getBuilderIndex(),
+                envelope.getBeaconBlockRoot(),
+                envelope.getParentBeaconBlockRoot());
     signedEnvelope =
         schemaDefinitions
             .getSignedExecutionPayloadEnvelopeSchema()
@@ -137,6 +159,44 @@ public class ExecutionPayloadGossipValidatorTest {
   @TestTemplate
   void shouldAcceptWhenValid() {
     assertThatSafeFuture(validator.validate(signedEnvelope)).isCompletedWithValue(ACCEPT);
+  }
+
+  @TestTemplate
+  void g2RejectsAlteredPayload() {
+    final ExecutionPayload altered = withStateRoot(payload, payload.getStateRoot().not());
+    final SignedExecutionPayloadEnvelope alteredEnvelope = createSignedEnvelopeWithPayload(altered);
+
+    final InternalValidationResult result = validator.validate(alteredEnvelope).getImmediately();
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription()).hasValueSatisfying(d -> assertThat(d).contains("computed"));
+  }
+
+  @TestTemplate
+  void g2RejectsAlteredRequests() {
+    final ExecutionPayloadEnvelope alteredEnvelope =
+        envelope
+            .getSchema()
+            .create(
+                payload,
+                dataStructureUtil.randomExecutionRequests(slot),
+                envelope.getBuilderIndex(),
+                envelope.getBeaconBlockRoot(),
+                envelope.getParentBeaconBlockRoot());
+    mockBlockWithBid(
+        envelope.getParentBeaconBlockRoot(),
+        envelope.getBuilderIndex(),
+        payload.getPrevRandao(),
+        payload.getGasLimit(),
+        payload.getBlockHash(),
+        alteredEnvelope.getExecutionRequests().hashTreeRoot());
+
+    final InternalValidationResult result =
+        validator
+            .validate(
+                signedEnvelope.getSchema().create(alteredEnvelope, signedEnvelope.getSignature()))
+            .getImmediately();
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription()).hasValueSatisfying(d -> assertThat(d).contains("computed"));
   }
 
   @TestTemplate
@@ -575,6 +635,27 @@ public class ExecutionPayloadGossipValidatorTest {
                 envelope.getBeaconBlockRoot(),
                 envelope.getParentBeaconBlockRoot());
     return signedEnvelope.getSchema().create(newEnvelope, signedEnvelope.getSignature());
+  }
+
+  private static ExecutionPayload withStateRoot(
+      final ExecutionPayload source, final Bytes32 stateRoot) {
+    return withField(source, "state_root", SszBytes32.of(stateRoot));
+  }
+
+  private static ExecutionPayload withBlockHash(
+      final ExecutionPayload source, final Bytes32 blockHash) {
+    return withField(source, "block_hash", SszBytes32.of(blockHash));
+  }
+
+  private static ExecutionPayload withField(
+      final ExecutionPayload source, final String fieldName, final SszData value) {
+    final SszContainerSchema<?> schema = source.getSchema();
+    final List<SszData> fields = new ArrayList<>();
+    for (int i = 0; i < schema.getFieldsCount(); i++) {
+      fields.add(source.get(i));
+    }
+    fields.set(schema.getFieldIndex(fieldName), value);
+    return (ExecutionPayload) schema.createFromFieldValues(fields);
   }
 
   private SignedExecutionPayloadEnvelope createSignedEnvelopeWithBlockRoot(final Bytes32 root) {
