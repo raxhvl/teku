@@ -31,6 +31,7 @@ import tech.pegasys.teku.infrastructure.async.SafeFuture;
 import tech.pegasys.teku.infrastructure.collections.LimitedSet;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.Spec;
+import tech.pegasys.teku.spec.SpecMilestone;
 import tech.pegasys.teku.spec.datastructures.blocks.BeaconBlock;
 import tech.pegasys.teku.spec.datastructures.epbs.BlockRootAndBuilderIndex;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloadBid;
@@ -38,6 +39,7 @@ import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloa
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadBid;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayload;
+import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayloadBlockHashCalculator;
 import tech.pegasys.teku.spec.datastructures.execution.Transaction;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.ExecutionPayloadCapella;
 import tech.pegasys.teku.spec.datastructures.state.beaconstate.BeaconState;
@@ -265,6 +267,11 @@ public class ExecutionPayloadGossipValidator {
                         executionRequestsRoot, bidExecutionRequestsRoot));
               }
 
+              if (isHeze(envelope)
+                  && !bid.getPayloadRoot().map(envelope::isPayloadRootValid).orElse(false)) {
+                return Optional.of(reject("Payload root does not match the bid's payload root"));
+              }
+
               return Optional.empty();
             });
   }
@@ -357,7 +364,7 @@ public class ExecutionPayloadGossipValidator {
               /*
                * [REJECT] The envelope signature is valid
                */
-              if (!isSignatureValid(envelope, blockState)) {
+              if (!isHeze(envelope.getMessage()) && !isSignatureValid(envelope, blockState)) {
                 LOG.trace("Invalid signed execution payload envelope signature. Rejecting");
                 return reject("Invalid signed execution payload envelope signature");
               }
@@ -426,7 +433,23 @@ public class ExecutionPayloadGossipValidator {
               withdrawalsRoot, expectedWithdrawalsRoot));
     }
 
+    if (isHeze(envelope)) {
+      return Optional.empty();
+    }
+    final Bytes32 computedBlockHash =
+        ExecutionPayloadBlockHashCalculator.computeGloasBlockHash(
+            envelope, spec.getExecutionRequestsDataCodec(envelope.getSlot()));
+    if (!payload.getBlockHash().equals(computedBlockHash)) {
+      return Optional.of(reject("Block hash is not computed correctly"));
+    }
+
     return Optional.empty();
+  }
+
+  private boolean isHeze(final ExecutionPayloadEnvelope envelope) {
+    return spec.atSlot(envelope.getSlot())
+        .getMilestone()
+        .isGreaterThanOrEqualTo(SpecMilestone.HEZE);
   }
 
   private boolean isSignatureValid(

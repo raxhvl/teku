@@ -16,12 +16,17 @@ package tech.pegasys.teku.statetransition.validation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 import static tech.pegasys.teku.infrastructure.async.SafeFutureAssert.assertThatSafeFuture;
+import static tech.pegasys.teku.spec.datastructures.epbs.PairingPrimitives.dishonestPayloadRoot;
+import static tech.pegasys.teku.spec.datastructures.epbs.PairingPrimitives.honestGloas;
+import static tech.pegasys.teku.spec.datastructures.epbs.PairingPrimitives.honestPayloadRoot;
+import static tech.pegasys.teku.spec.datastructures.epbs.PairingPrimitives.tamperPayload;
 import static tech.pegasys.teku.statetransition.validation.InternalValidationResult.ACCEPT;
 import static tech.pegasys.teku.statetransition.validation.InternalValidationResult.SAVE_FOR_FUTURE;
 import static tech.pegasys.teku.statetransition.validation.InternalValidationResult.ignore;
@@ -41,6 +46,7 @@ import tech.pegasys.teku.spec.Spec;
 import tech.pegasys.teku.spec.SpecMilestone;
 import tech.pegasys.teku.spec.SpecVersion;
 import tech.pegasys.teku.spec.TestSpecContext;
+import tech.pegasys.teku.spec.TestSpecFactory;
 import tech.pegasys.teku.spec.TestSpecInvocationContextProvider.SpecContext;
 import tech.pegasys.teku.spec.datastructures.blocks.BeaconBlock;
 import tech.pegasys.teku.spec.datastructures.epbs.BlockRootAndBuilderIndex;
@@ -49,6 +55,7 @@ import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloa
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadBid;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayload;
+import tech.pegasys.teku.spec.datastructures.execution.ExecutionRequestsDataCodec;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.ExecutionPayloadCapella;
 import tech.pegasys.teku.spec.datastructures.execution.versions.capella.Withdrawal;
 import tech.pegasys.teku.spec.datastructures.state.beaconstate.BeaconState;
@@ -77,6 +84,8 @@ public class ExecutionPayloadGossipValidatorTest {
   private BeaconState blockState;
   private ExecutionPayload payload;
   private SchemaDefinitionsGloas schemaDefinitions;
+  private ExecutionRequestsDataCodec requestsCodec;
+  private UInt64 epoch;
 
   @BeforeEach
   void setUp(final SpecContext specContext) {
@@ -101,6 +110,10 @@ public class ExecutionPayloadGossipValidatorTest {
                 dataStructureUtil.randomBuilderIndex(),
                 dataStructureUtil.randomBytes32(),
                 dataStructureUtil.randomBytes32());
+    requestsCodec = specContext.getSpec().getExecutionRequestsDataCodec(slot);
+    when(spec.getExecutionRequestsDataCodec(any())).thenReturn(requestsCodec);
+    envelope = honestGloas(envelope, requestsCodec);
+    payload = envelope.getPayload();
     signedEnvelope =
         schemaDefinitions
             .getSignedExecutionPayloadEnvelopeSchema()
@@ -128,7 +141,9 @@ public class ExecutionPayloadGossipValidatorTest {
     when(specVersion.miscHelpers()).thenReturn(miscHelpers);
     // Real config so the execution request and withdrawal limit rules see actual limits
     when(specVersion.getConfig()).thenReturn(specContext.getSpec().atSlot(slot).getConfig());
+    when(specVersion.getMilestone()).thenReturn(specContext.getSpec().atSlot(slot).getMilestone());
     when(spec.atSlot(slot)).thenReturn(specVersion);
+    epoch = specContext.getSpec().computeEpochAtSlot(slot);
     when(gossipValidationHelper.isSignatureValidWithRespectToBuilderIndex(
             any(), any(), any(), any()))
         .thenReturn(true);
@@ -137,6 +152,122 @@ public class ExecutionPayloadGossipValidatorTest {
   @TestTemplate
   void shouldAcceptWhenValid() {
     assertThatSafeFuture(validator.validate(signedEnvelope)).isCompletedWithValue(ACCEPT);
+  }
+
+  @TestTemplate
+  void g2RejectsAlteredPayload() {
+    final SignedExecutionPayloadEnvelope alteredEnvelope =
+        createSignedEnvelopeWithPayload(tamperPayload(envelope).getPayload());
+
+    final InternalValidationResult result = validator.validate(alteredEnvelope).getImmediately();
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription()).hasValueSatisfying(d -> assertThat(d).contains("computed"));
+  }
+
+  @TestTemplate
+  void g2RejectsAlteredRequests() {
+    final ExecutionPayloadEnvelope alteredEnvelope =
+        envelope
+            .getSchema()
+            .create(
+                payload,
+                dataStructureUtil.randomExecutionRequests(slot),
+                envelope.getBuilderIndex(),
+                envelope.getBeaconBlockRoot(),
+                envelope.getParentBeaconBlockRoot());
+    mockBlockWithBid(
+        envelope.getParentBeaconBlockRoot(),
+        envelope.getBuilderIndex(),
+        payload.getPrevRandao(),
+        payload.getGasLimit(),
+        payload.getBlockHash(),
+        alteredEnvelope.getExecutionRequests().hashTreeRoot());
+
+    final InternalValidationResult result =
+        validator
+            .validate(
+                signedEnvelope.getSchema().create(alteredEnvelope, signedEnvelope.getSignature()))
+            .getImmediately();
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription()).hasValueSatisfying(d -> assertThat(d).contains("computed"));
+  }
+
+  @TestTemplate
+  void f1LastGloasEpochRejectsUncomputedBlockHash() {
+    final ExecutionPayloadEnvelope tampered = tamperPayload(envelope);
+    final InternalValidationResult result =
+        validate(hezeAt(epoch.plus(1)), honestPayloadRoot(tampered), tampered);
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription()).hasValueSatisfying(d -> assertThat(d).contains("computed"));
+  }
+
+  @TestTemplate
+  void f1LastGloasEpochIgnoresPayloadRoot() {
+    assertThat(validate(hezeAt(epoch.plus(1)), dishonestPayloadRoot(envelope), envelope))
+        .isEqualTo(ACCEPT);
+  }
+
+  @TestTemplate
+  void f1FirstHezeEpochRejectsDishonestPayloadRoot() {
+    final InternalValidationResult result =
+        validate(hezeAt(epoch), dishonestPayloadRoot(envelope), envelope);
+    assertThat(result.code()).isEqualTo(ValidationResultCode.REJECT);
+    assertThat(result.getDescription())
+        .hasValueSatisfying(d -> assertThat(d).contains("payload root"));
+  }
+
+  @TestTemplate
+  void f1FirstHezeEpochIgnoresBlockHash() {
+    final ExecutionPayloadEnvelope tampered = tamperPayload(envelope);
+    assertThat(validate(hezeAt(epoch), honestPayloadRoot(tampered), tampered)).isEqualTo(ACCEPT);
+  }
+
+  @TestTemplate
+  void h2SkipsSignature() {
+    when(gossipValidationHelper.isSignatureValidWithRespectToBuilderIndex(
+            any(), any(), any(), any()))
+        .thenReturn(false);
+    assertThat(validate(hezeAt(epoch), honestPayloadRoot(envelope), envelope)).isEqualTo(ACCEPT);
+  }
+
+  private Spec hezeAt(final UInt64 hezeEpoch) {
+    return TestSpecFactory.createMinimalWithHezeForkEpoch(hezeEpoch);
+  }
+
+  private InternalValidationResult validate(
+      final Spec forkSchedule,
+      final Bytes32 bidPayloadRoot,
+      final ExecutionPayloadEnvelope candidate) {
+    final SpecVersion forkVersion = forkSchedule.atSlot(slot);
+    when(spec.atSlot(slot).getMilestone()).thenReturn(forkVersion.getMilestone());
+    if (forkVersion.getMilestone().isGreaterThanOrEqualTo(SpecMilestone.HEZE)) {
+      mockBlockWithBidCarrying(
+          SchemaDefinitionsGloas.required(forkVersion.getSchemaDefinitions()), bidPayloadRoot);
+    }
+    return validator
+        .validate(signedEnvelope.getSchema().create(candidate, signedEnvelope.getSignature()))
+        .getImmediately();
+  }
+
+  private void mockBlockWithBidCarrying(
+      final SchemaDefinitionsGloas hezeSchemas, final Bytes32 payloadRoot) {
+    final SignedExecutionPayloadBid gloasBid =
+        beaconBlock.getBody().getOptionalSignedExecutionPayloadBid().orElseThrow();
+    final SignedExecutionPayloadBid hezeBid =
+        hezeSchemas
+            .getSignedExecutionPayloadBidSchema()
+            .create(
+                hezeSchemas
+                    .getExecutionPayloadBidSchema()
+                    .upgrade(gloasBid.getMessage())
+                    .withPayloadRoot(payloadRoot),
+                gloasBid.getSignature());
+    final BeaconBlock block = mock(BeaconBlock.class, RETURNS_DEEP_STUBS);
+    when(block.getParentRoot()).thenReturn(beaconBlock.getParentRoot());
+    when(block.getRoot()).thenReturn(beaconBlock.getRoot());
+    when(block.getBody().getOptionalSignedExecutionPayloadBid()).thenReturn(Optional.of(hezeBid));
+    when(gossipValidationHelper.retrieveBlockByRoot(blockRoot))
+        .thenReturn(SafeFuture.completedFuture(Optional.of(block)));
   }
 
   @TestTemplate

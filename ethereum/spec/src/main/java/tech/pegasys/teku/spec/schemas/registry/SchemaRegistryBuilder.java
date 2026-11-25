@@ -140,6 +140,7 @@ import tech.pegasys.teku.spec.config.SpecConfigDeneb;
 import tech.pegasys.teku.spec.config.SpecConfigElectra;
 import tech.pegasys.teku.spec.config.SpecConfigFulu;
 import tech.pegasys.teku.spec.config.SpecConfigGloas;
+import tech.pegasys.teku.spec.config.SpecConfigHeze;
 import tech.pegasys.teku.spec.constants.NetworkConstants;
 import tech.pegasys.teku.spec.datastructures.blobs.versions.deneb.BlobKzgCommitmentsSchemaDeneb;
 import tech.pegasys.teku.spec.datastructures.blobs.versions.deneb.BlobSchema;
@@ -1321,6 +1322,11 @@ public class SchemaRegistryBuilder {
     return providerBuilder(EXECUTION_PAYLOAD_BID_SCHEMA)
         .withCreator(
             GLOAS, (registry, specConfig, schemaName) -> new ExecutionPayloadBidSchema(registry))
+        .withCreator(
+            HEZE,
+            (registry, specConfig, schemaName) ->
+                new ExecutionPayloadBidSchema(
+                    registry, SpecConfigHeze.required(specConfig).getInclusionListCommitteeSize()))
         .build();
   }
 
@@ -1351,6 +1357,10 @@ public class SchemaRegistryBuilder {
         .withCreator(
             GLOAS,
             (registry, specConfig, schemaName) -> new ExecutionPayloadEnvelopeSchema(registry))
+        .withCreator(
+            HEZE,
+            (registry, specConfig, schemaName) ->
+                new ExecutionPayloadEnvelopeSchema(registry, true))
         .build();
   }
 
@@ -1360,6 +1370,10 @@ public class SchemaRegistryBuilder {
             GLOAS,
             (registry, specConfig, schemaName) ->
                 new BlindedExecutionPayloadEnvelopeSchema(registry))
+        .withCreator(
+            HEZE,
+            (registry, specConfig, schemaName) ->
+                new BlindedExecutionPayloadEnvelopeSchema(registry, true))
         .build();
   }
 
