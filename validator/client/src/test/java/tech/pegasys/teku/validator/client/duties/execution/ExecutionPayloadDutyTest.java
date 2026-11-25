@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
@@ -27,9 +28,11 @@ import org.junit.jupiter.api.Test;
 import tech.pegasys.teku.infrastructure.async.SafeFuture;
 import tech.pegasys.teku.infrastructure.async.StubAsyncRunner;
 import tech.pegasys.teku.infrastructure.logging.ValidatorLogger;
+import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.Spec;
 import tech.pegasys.teku.spec.TestSpecFactory;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloadBid;
+import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.state.ForkInfo;
 import tech.pegasys.teku.spec.datastructures.validator.BroadcastValidationLevel;
@@ -118,5 +121,51 @@ class ExecutionPayloadDutyTest {
             eq(bid.getSlot()),
             eq(bid.getBuilderIndex()),
             argThat(throwable -> throwable.getCause().equals(exception)));
+  }
+
+  @Test
+  public void h3SkipsSigningOnFirstHezeEpoch() {
+    final Spec forkSpec = TestSpecFactory.createMinimalWithHezeForkEpoch(UInt64.ONE);
+    final ExecutionPayloadEnvelope envelope =
+        performOn(forkSpec, forkSpec.computeStartSlotAtEpoch(UInt64.ONE));
+
+    verifyNoInteractions(signer);
+    verify(validatorApiChannel)
+        .publishSignedExecutionPayload(
+            argThat(
+                (final SignedExecutionPayloadEnvelope published) ->
+                    published.getMessage().equals(envelope)),
+            eq(Optional.of(BroadcastValidationLevel.GOSSIP)));
+  }
+
+  @Test
+  public void h3StillSignsOnLastGloasEpoch() {
+    final Spec forkSpec = TestSpecFactory.createMinimalWithHezeForkEpoch(UInt64.ONE);
+    final ExecutionPayloadEnvelope envelope =
+        performOn(forkSpec, forkSpec.computeStartSlotAtEpoch(UInt64.ONE).minus(1));
+
+    verify(signer).signExecutionPayloadEnvelope(envelope, fork);
+  }
+
+  private ExecutionPayloadEnvelope performOn(final Spec forkSpec, final UInt64 slot) {
+    final DataStructureUtil forkData = new DataStructureUtil(forkSpec);
+    final ExecutionPayloadBid bid = forkData.randomExecutionPayloadBid();
+    final Bytes32 beaconBlockRoot = forkData.randomBytes32();
+    final SignedExecutionPayloadEnvelope signed =
+        forkData.randomSignedExecutionPayloadEnvelope(slot.longValue());
+    when(validatorApiChannel.createUnsignedExecutionPayload(bid.getSlot(), beaconBlockRoot))
+        .thenReturn(SafeFuture.completedFuture(Optional.of(signed.getMessage())));
+    when(signer.signExecutionPayloadEnvelope(any(), any()))
+        .thenReturn(SafeFuture.completedFuture(signed.getSignature()));
+    when(validatorApiChannel.publishSignedExecutionPayload(
+            any(SignedExecutionPayloadEnvelope.class), any()))
+        .thenReturn(
+            SafeFuture.completedFuture(
+                PublishSignedExecutionPayloadResult.success(signed.getBeaconBlockRoot())));
+
+    new ExecutionPayloadDuty(forkSpec, asyncRunner, validatorApiChannel, validatorLogger)
+        .onSelfBuiltBidIncludedInBlock(validator, fork, bid, beaconBlockRoot);
+    asyncRunner.executeDueActions();
+    return signed.getMessage();
   }
 }

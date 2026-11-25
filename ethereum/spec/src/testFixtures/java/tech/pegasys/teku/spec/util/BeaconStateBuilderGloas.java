@@ -40,6 +40,7 @@ import tech.pegasys.teku.spec.datastructures.state.versions.electra.PendingParti
 import tech.pegasys.teku.spec.datastructures.state.versions.gloas.Builder;
 import tech.pegasys.teku.spec.datastructures.state.versions.gloas.BuilderPendingPayment;
 import tech.pegasys.teku.spec.datastructures.state.versions.gloas.BuilderPendingWithdrawal;
+import tech.pegasys.teku.spec.schemas.SchemaDefinitionsGloas;
 
 public class BeaconStateBuilderGloas
     extends AbstractBeaconStateBuilder<
@@ -314,7 +315,10 @@ public class BeaconStateBuilderGloas
                     ? dataStructureUtil.randomUInt64(defaultValidatorCount)
                     : UInt64.ZERO);
 
-    this.latestExecutionPayloadBid = dataStructureUtil.randomExecutionPayloadBid();
+    this.latestExecutionPayloadBid =
+        SchemaDefinitionsGloas.required(spec.getSchemaDefinitions())
+            .getExecutionPayloadBidSchema()
+            .upgrade(dataStructureUtil.randomExecutionPayloadBid());
 
     this.builders =
         dataStructureUtil.randomSszList(

@@ -15,10 +15,10 @@ package tech.pegasys.teku.spec.datastructures.epbs.versions.gloas;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import java.util.Optional;
 import org.apache.tuweni.bytes.Bytes32;
-import tech.pegasys.teku.infrastructure.ssz.containers.Container5;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszBytes32;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszUInt64;
+import tech.pegasys.teku.infrastructure.ssz.SszData;
+import tech.pegasys.teku.infrastructure.ssz.impl.AbstractSszImmutableContainer;
 import tech.pegasys.teku.infrastructure.ssz.tree.TreeNode;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.datastructures.blocks.SlotAndBlockRoot;
@@ -28,29 +28,10 @@ import tech.pegasys.teku.spec.datastructures.execution.ExecutionRequests;
 import tech.pegasys.teku.spec.datastructures.execution.versions.gloas.ExecutionPayloadGloas;
 import tech.pegasys.teku.spec.schemas.SchemaDefinitionsGloas;
 
-public class ExecutionPayloadEnvelope
-    extends Container5<
-        ExecutionPayloadEnvelope,
-        ExecutionPayload,
-        ExecutionRequests,
-        SszUInt64,
-        SszBytes32,
-        SszBytes32> {
+public class ExecutionPayloadEnvelope extends AbstractSszImmutableContainer {
 
-  ExecutionPayloadEnvelope(
-      final ExecutionPayloadEnvelopeSchema schema,
-      final ExecutionPayload payload,
-      final ExecutionRequests executionRequests,
-      final UInt64 builderIndex,
-      final Bytes32 beaconBlockRoot,
-      final Bytes32 parentBeaconBlockRoot) {
-    super(
-        schema,
-        payload,
-        executionRequests,
-        SszUInt64.of(builderIndex),
-        SszBytes32.of(beaconBlockRoot),
-        SszBytes32.of(parentBeaconBlockRoot));
+  ExecutionPayloadEnvelope(final ExecutionPayloadEnvelopeSchema schema, final SszData[] values) {
+    super(schema, values);
   }
 
   ExecutionPayloadEnvelope(final ExecutionPayloadEnvelopeSchema type, final TreeNode backingNode) {
@@ -58,23 +39,32 @@ public class ExecutionPayloadEnvelope
   }
 
   public ExecutionPayload getPayload() {
-    return getField0();
+    return getAny(0);
   }
 
   public ExecutionRequests getExecutionRequests() {
-    return getField1();
+    return getAny(1);
+  }
+
+  public Optional<UInt64> getOptionalBuilderIndex() {
+    return EnvelopeFields.builderIndex(this);
   }
 
   public UInt64 getBuilderIndex() {
-    return getField2().get();
+    return getOptionalBuilderIndex()
+        .orElseThrow(() -> new IllegalStateException("Heze envelopes have no builder_index"));
   }
 
   public Bytes32 getBeaconBlockRoot() {
-    return getField3().get();
+    return EnvelopeFields.bytes32(this, EnvelopeFields.BEACON_BLOCK_ROOT);
   }
 
   public Bytes32 getParentBeaconBlockRoot() {
-    return getField4().get();
+    return EnvelopeFields.bytes32(this, EnvelopeFields.PARENT_BEACON_BLOCK_ROOT);
+  }
+
+  public boolean isPayloadRootValid(final Bytes32 payloadRoot) {
+    return getPayload().hashTreeRoot().equals(payloadRoot);
   }
 
   public UInt64 getSlot() {
@@ -86,7 +76,9 @@ public class ExecutionPayloadEnvelope
   }
 
   public BlockRootAndBuilderIndex getBlockRootAndBuilderIndex() {
-    return new BlockRootAndBuilderIndex(getBeaconBlockRoot(), getBuilderIndex());
+    // Heze keys by block root alone (#5820), so a constant stands in for the missing builder
+    return new BlockRootAndBuilderIndex(
+        getBeaconBlockRoot(), getOptionalBuilderIndex().orElse(UInt64.ZERO));
   }
 
   @Override
@@ -103,7 +95,7 @@ public class ExecutionPayloadEnvelope
                     .getExecutionPayloadHeaderSchema()
                     .createFromExecutionPayload(getPayload()),
                 getExecutionRequests(),
-                getBuilderIndex(),
+                getOptionalBuilderIndex().orElse(UInt64.ZERO),
                 getBeaconBlockRoot(),
                 getParentBeaconBlockRoot());
     checkState(

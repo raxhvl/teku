@@ -17,12 +17,8 @@ import static tech.pegasys.teku.spec.schemas.registry.SchemaTypes.EXECUTION_PAYL
 import static tech.pegasys.teku.spec.schemas.registry.SchemaTypes.EXECUTION_REQUESTS_SCHEMA;
 
 import org.apache.tuweni.bytes.Bytes32;
-import tech.pegasys.teku.infrastructure.ssz.containers.ContainerSchema5;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszBytes32;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszUInt64;
-import tech.pegasys.teku.infrastructure.ssz.schema.ProgressiveSchemaUtils;
-import tech.pegasys.teku.infrastructure.ssz.schema.SszPrimitiveSchemas;
 import tech.pegasys.teku.infrastructure.ssz.schema.SszSchema;
+import tech.pegasys.teku.infrastructure.ssz.schema.impl.AbstractSszContainerSchema;
 import tech.pegasys.teku.infrastructure.ssz.tree.TreeNode;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.datastructures.execution.ExecutionPayload;
@@ -30,29 +26,26 @@ import tech.pegasys.teku.spec.datastructures.execution.ExecutionRequests;
 import tech.pegasys.teku.spec.schemas.registry.SchemaRegistry;
 
 public class ExecutionPayloadEnvelopeSchema
-    extends ContainerSchema5<
-        ExecutionPayloadEnvelope,
-        ExecutionPayload,
-        ExecutionRequests,
-        SszUInt64,
-        SszBytes32,
-        SszBytes32> {
-
-  private static final boolean[] ACTIVE_FIELDS = ProgressiveSchemaUtils.allActive(5);
+    extends AbstractSszContainerSchema<ExecutionPayloadEnvelope> {
 
   public ExecutionPayloadEnvelopeSchema(final SchemaRegistry schemaRegistry) {
+    this(schemaRegistry, false);
+  }
+
+  public ExecutionPayloadEnvelopeSchema(
+      final SchemaRegistry schemaRegistry, final boolean withoutBuilderIndex) {
     super(
         "ExecutionPayloadEnvelope",
-        ACTIVE_FIELDS,
-        namedSchema(
-            "payload",
-            SszSchema.as(ExecutionPayload.class, schemaRegistry.get(EXECUTION_PAYLOAD_SCHEMA))),
-        namedSchema(
-            "execution_requests",
-            SszSchema.as(ExecutionRequests.class, schemaRegistry.get(EXECUTION_REQUESTS_SCHEMA))),
-        namedSchema("builder_index", SszPrimitiveSchemas.UINT64_SCHEMA),
-        namedSchema("beacon_block_root", SszPrimitiveSchemas.BYTES32_SCHEMA),
-        namedSchema("parent_beacon_block_root", SszPrimitiveSchemas.BYTES32_SCHEMA));
+        EnvelopeFields.activeFields(withoutBuilderIndex),
+        EnvelopeFields.fields(
+            namedSchema(
+                "payload",
+                SszSchema.as(ExecutionPayload.class, schemaRegistry.get(EXECUTION_PAYLOAD_SCHEMA))),
+            namedSchema(
+                "execution_requests",
+                SszSchema.as(
+                    ExecutionRequests.class, schemaRegistry.get(EXECUTION_REQUESTS_SCHEMA))),
+            withoutBuilderIndex));
   }
 
   public ExecutionPayloadEnvelope create(
@@ -62,7 +55,14 @@ public class ExecutionPayloadEnvelopeSchema
       final Bytes32 beaconBlockRoot,
       final Bytes32 parentBeaconBlockRoot) {
     return new ExecutionPayloadEnvelope(
-        this, payload, executionRequests, builderIndex, beaconBlockRoot, parentBeaconBlockRoot);
+        this,
+        EnvelopeFields.values(
+            this,
+            payload,
+            executionRequests,
+            builderIndex,
+            beaconBlockRoot,
+            parentBeaconBlockRoot));
   }
 
   @Override

@@ -721,7 +721,11 @@ public class BlockProposalTestUtil {
                 executionPayloadProposalData.executionRequests().hashTreeRoot());
     return schemaDefinitions
         .getSignedExecutionPayloadBidSchema()
-        .create(bid, BLSSignature.infinity());
+        .create(
+            bid.getPayloadRoot().isPresent()
+                ? bid.withPayloadRoot(executionPayload.hashTreeRoot())
+                : bid,
+            BLSSignature.infinity());
   }
 
   private Boolean isMergeTransitionComplete(final BeaconState state) {

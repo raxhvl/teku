@@ -105,7 +105,10 @@ public class ExecutionPayloadEnvelopeInvariants {
     }
     final int payloadDataOffset =
         SszType.sszBytesToLength(bytes.slice(envelopeDataOffset, BYTES_PER_LENGTH_OFFSET));
-    if (payloadDataOffset != EXECUTION_PAYLOAD_ENVELOPE_FIXED_PART_SIZE) {
+    // Heze gaps builder_index, which drops it from the bytes
+    if (payloadDataOffset != EXECUTION_PAYLOAD_ENVELOPE_FIXED_PART_SIZE
+        && payloadDataOffset
+            != EXECUTION_PAYLOAD_ENVELOPE_FIXED_PART_SIZE - UINT64_SCHEMA.getSszFixedPartSize()) {
       throw new IllegalArgumentException("Unexpected execution payload envelope format");
     }
     final Bytes slotData =

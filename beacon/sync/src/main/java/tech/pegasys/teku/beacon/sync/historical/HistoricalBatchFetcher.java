@@ -46,6 +46,7 @@ import tech.pegasys.teku.networking.eth2.peers.Eth2Peer;
 import tech.pegasys.teku.networking.eth2.rpc.core.InvalidResponseException;
 import tech.pegasys.teku.networking.p2p.peer.DisconnectReason;
 import tech.pegasys.teku.spec.Spec;
+import tech.pegasys.teku.spec.SpecMilestone;
 import tech.pegasys.teku.spec.config.SpecConfig;
 import tech.pegasys.teku.spec.constants.Domain;
 import tech.pegasys.teku.spec.datastructures.blobs.versions.deneb.BlobSidecar;
@@ -300,7 +301,9 @@ public class HistoricalBatchFetcher {
   @VisibleForTesting
   void processExecutionPayload(
       final SignedExecutionPayloadEnvelope signedExecutionPayloadEnvelope) {
-    validateExecutionPayloadBlockHash(signedExecutionPayloadEnvelope);
+    if (!isHeze(signedExecutionPayloadEnvelope.getMessage().getSlot())) {
+      validateExecutionPayloadBlockHash(signedExecutionPayloadEnvelope);
+    }
     blindedExecutionPayloadsByBlockRootToImport.put(
         signedExecutionPayloadEnvelope.getBeaconBlockRoot(),
         blindExecutionPayloadEnvelope(signedExecutionPayloadEnvelope));
@@ -609,7 +612,9 @@ public class HistoricalBatchFetcher {
             .getSignedExecutionPayloadBid()
             .getMessage();
     final ExecutionPayloadHeader payloadHeader = envelope.getPayloadHeader();
-    requireEqual("builder index", envelope.getBuilderIndex(), bid.getBuilderIndex(), blockRoot);
+    envelope
+        .getOptionalBuilderIndex()
+        .ifPresent(index -> requireEqual("builder index", index, bid.getBuilderIndex(), blockRoot));
     requireEqual(
         "parent block hash", payloadHeader.getParentHash(), bid.getParentBlockHash(), blockRoot);
     requireEqual("block hash", payloadHeader.getBlockHash(), bid.getBlockHash(), blockRoot);
@@ -620,6 +625,17 @@ public class HistoricalBatchFetcher {
         envelope.getExecutionRequests().hashTreeRoot(),
         bid.getExecutionRequestsRoot(),
         blockRoot);
+    if (isHeze(envelope.getSlot())) {
+      requireEqual(
+          "payload root",
+          Optional.of(payloadHeader.hashTreeRoot()),
+          bid.getPayloadRoot(),
+          blockRoot);
+    }
+  }
+
+  private boolean isHeze(final UInt64 slot) {
+    return spec.atSlot(slot).getMilestone().isGreaterThanOrEqualTo(SpecMilestone.HEZE);
   }
 
   private static void requireEqual(

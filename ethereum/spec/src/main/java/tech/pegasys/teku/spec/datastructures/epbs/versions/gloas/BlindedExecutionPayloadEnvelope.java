@@ -15,10 +15,10 @@ package tech.pegasys.teku.spec.datastructures.epbs.versions.gloas;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import java.util.Optional;
 import org.apache.tuweni.bytes.Bytes32;
-import tech.pegasys.teku.infrastructure.ssz.containers.Container5;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszBytes32;
-import tech.pegasys.teku.infrastructure.ssz.primitive.SszUInt64;
+import tech.pegasys.teku.infrastructure.ssz.SszData;
+import tech.pegasys.teku.infrastructure.ssz.impl.AbstractSszImmutableContainer;
 import tech.pegasys.teku.infrastructure.ssz.tree.TreeNode;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.datastructures.blocks.SlotAndBlockRoot;
@@ -28,29 +28,11 @@ import tech.pegasys.teku.spec.datastructures.execution.ExecutionRequests;
 import tech.pegasys.teku.spec.datastructures.execution.versions.gloas.ExecutionPayloadHeaderGloas;
 import tech.pegasys.teku.spec.schemas.SchemaDefinitionsGloas;
 
-public class BlindedExecutionPayloadEnvelope
-    extends Container5<
-        BlindedExecutionPayloadEnvelope,
-        ExecutionPayloadHeader,
-        ExecutionRequests,
-        SszUInt64,
-        SszBytes32,
-        SszBytes32> {
+public class BlindedExecutionPayloadEnvelope extends AbstractSszImmutableContainer {
 
   BlindedExecutionPayloadEnvelope(
-      final BlindedExecutionPayloadEnvelopeSchema schema,
-      final ExecutionPayloadHeader payloadHeader,
-      final ExecutionRequests executionRequests,
-      final UInt64 builderIndex,
-      final Bytes32 beaconBlockRoot,
-      final Bytes32 parentBeaconBlockRoot) {
-    super(
-        schema,
-        payloadHeader,
-        executionRequests,
-        SszUInt64.of(builderIndex),
-        SszBytes32.of(beaconBlockRoot),
-        SszBytes32.of(parentBeaconBlockRoot));
+      final BlindedExecutionPayloadEnvelopeSchema schema, final SszData[] values) {
+    super(schema, values);
   }
 
   BlindedExecutionPayloadEnvelope(
@@ -59,23 +41,28 @@ public class BlindedExecutionPayloadEnvelope
   }
 
   public ExecutionPayloadHeader getPayloadHeader() {
-    return getField0();
+    return getAny(0);
   }
 
   public ExecutionRequests getExecutionRequests() {
-    return getField1();
+    return getAny(1);
+  }
+
+  public Optional<UInt64> getOptionalBuilderIndex() {
+    return EnvelopeFields.builderIndex(this);
   }
 
   public UInt64 getBuilderIndex() {
-    return getField2().get();
+    return getOptionalBuilderIndex()
+        .orElseThrow(() -> new IllegalStateException("Heze envelopes have no builder_index"));
   }
 
   public Bytes32 getBeaconBlockRoot() {
-    return getField3().get();
+    return EnvelopeFields.bytes32(this, EnvelopeFields.BEACON_BLOCK_ROOT);
   }
 
   public Bytes32 getParentBeaconBlockRoot() {
-    return getField4().get();
+    return EnvelopeFields.bytes32(this, EnvelopeFields.PARENT_BEACON_BLOCK_ROOT);
   }
 
   public UInt64 getSlot() {
@@ -102,7 +89,7 @@ public class BlindedExecutionPayloadEnvelope
             .create(
                 payload,
                 getExecutionRequests(),
-                getBuilderIndex(),
+                getOptionalBuilderIndex().orElse(UInt64.ZERO),
                 getBeaconBlockRoot(),
                 getParentBeaconBlockRoot());
     checkState(

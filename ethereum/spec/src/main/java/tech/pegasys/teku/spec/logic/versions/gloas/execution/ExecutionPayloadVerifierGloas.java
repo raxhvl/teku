@@ -99,10 +99,13 @@ public class ExecutionPayloadVerifierGloas implements ExecutionPayloadVerifier {
       throws ExecutionPayloadVerificationException {
     final ExecutionPayloadEnvelope envelope = signedEnvelope.getMessage();
     final ExecutionPayload payload = envelope.getPayload();
+    final Optional<Bytes32> payloadRoot =
+        BeaconStateGloas.required(state).getLatestExecutionPayloadBid().getPayloadRoot();
 
     // Verify signature
-    if (!verifyExecutionPayloadEnvelopeSignature(
-        state, signedEnvelope, signatureVerifier, verificationSlot)) {
+    if (payloadRoot.isEmpty()
+        && !verifyExecutionPayloadEnvelopeSignature(
+            state, signedEnvelope, signatureVerifier, verificationSlot)) {
       throw new ExecutionPayloadVerificationException(
           "Signature verification of the execution payload envelope failed");
     }
@@ -125,7 +128,8 @@ public class ExecutionPayloadVerifierGloas implements ExecutionPayloadVerifier {
     // Verify consistency with the committed bid
     final ExecutionPayloadBid committedBid = stateGloas.getLatestExecutionPayloadBid();
 
-    if (!envelope.getBuilderIndex().equals(committedBid.getBuilderIndex())) {
+    if (payloadRoot.isEmpty()
+        && !envelope.getBuilderIndex().equals(committedBid.getBuilderIndex())) {
       throw new ExecutionPayloadVerificationException(
           "Builder index of the envelope is not consistent with the builder index of the committed bid");
     }
@@ -146,6 +150,10 @@ public class ExecutionPayloadVerifierGloas implements ExecutionPayloadVerifier {
         .equals(envelope.getExecutionRequests().hashTreeRoot())) {
       throw new ExecutionPayloadVerificationException(
           "Execution requests root of the committed bid is not consistent with the execution requests of the payload");
+    }
+    if (payloadRoot.isPresent() && !payloadRoot.get().equals(payload.hashTreeRoot())) {
+      throw new ExecutionPayloadVerificationException(
+          "Committed bid payload root is not consistent with the payload");
     }
 
     // Verify the execution payload is valid

@@ -17,11 +17,14 @@ import java.util.Optional;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.tuweni.bytes.Bytes32;
+import tech.pegasys.teku.bls.BLSSignature;
 import tech.pegasys.teku.infrastructure.async.AsyncRunner;
 import tech.pegasys.teku.infrastructure.async.SafeFuture;
 import tech.pegasys.teku.infrastructure.logging.ValidatorLogger;
 import tech.pegasys.teku.infrastructure.unsigned.UInt64;
 import tech.pegasys.teku.spec.Spec;
+import tech.pegasys.teku.spec.SpecMilestone;
+import tech.pegasys.teku.spec.SpecVersion;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloadBid;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.ExecutionPayloadEnvelope;
 import tech.pegasys.teku.spec.datastructures.epbs.versions.gloas.SignedExecutionPayloadEnvelope;
@@ -96,15 +99,16 @@ public class ExecutionPayloadDuty implements ExecutionPayloadBidEventsChannel {
       final Validator validator,
       final ExecutionPayloadEnvelope executionPayload,
       final ForkInfo forkInfo) {
-    return validator
-        .getSigner()
-        .signExecutionPayloadEnvelope(executionPayload, forkInfo)
-        .thenApply(
-            signature ->
-                SchemaDefinitionsGloas.required(
-                        spec.atSlot(executionPayload.getSlot()).getSchemaDefinitions())
-                    .getSignedExecutionPayloadEnvelopeSchema()
-                    .create(executionPayload, signature));
+    final SpecVersion specVersion = spec.atSlot(executionPayload.getSlot());
+    final SafeFuture<BLSSignature> signature =
+        specVersion.getMilestone().isGreaterThanOrEqualTo(SpecMilestone.HEZE)
+            ? SafeFuture.completedFuture(BLSSignature.empty())
+            : validator.getSigner().signExecutionPayloadEnvelope(executionPayload, forkInfo);
+    return signature.thenApply(
+        sig ->
+            SchemaDefinitionsGloas.required(specVersion.getSchemaDefinitions())
+                .getSignedExecutionPayloadEnvelopeSchema()
+                .create(executionPayload, sig));
   }
 
   private SafeFuture<Void> publishSignedExecutionPayload(
